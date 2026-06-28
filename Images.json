@@ -1,0 +1,1574 @@
+{
+  "name": "My workflow",
+  "nodes": [
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.user_prompt }}",
+        "options": {
+          "systemMessage": "You are an expert prompt engineer for SDXL and Flux.\nYou are an expert prompt engineer for SDXL and Flux.\nTransform this request into an ultra-detailed English prompt \noptimized for image generation.\nRequest: {{ $json.user_prompt }}\nRaw prompt only, nothing else."
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        -672,
+        944
+      ],
+      "id": "71433542-a66c-4357-8f1c-bdecbf962dbe",
+      "name": "Prompt Engineer Sans image"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "736b0798-50d0-45c8-95f7-35ca03fe7147",
+              "leftValue": "={{ $json.has_image }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -1088,
+        704
+      ],
+      "id": "d3fa9cca-1c69-4490-96a5-9df786af78f9",
+      "name": "If"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=You are an expert prompt engineer for SDXL and Flux image generation.\n\nUser's requested scene: \"{{ $('Détecteur').item.json.user_prompt }}\"\nDescription of the subject from the image: \"{{ $json.message.content }}\"\n\nYour task: Create ONE ultra-detailed English prompt for image generation by merging the subject from the description naturally into the user's requested scene.\n\nOutput ONLY the raw English prompt. No introduction, no quotes, no explanations.",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        -464,
+        480
+      ],
+      "id": "5cd083c4-969d-4387-8815-1ea08b16e596",
+      "name": "Fusion"
+    },
+    {
+      "parameters": {
+        "jsCode": "// === URL MAKER - Version ultra robuste pour loop ===\n\nconst items = $input.all(); // Récupère TOUS les items entrants\n\nconst output = [];\n\nitems.forEach((item, index) => {\n    const inputData = item.json || {};\n    let prompts = [];\n\n    // Cas 1 : Objet avec prompt_1, prompt_2, prompt_3... (cas le plus courant après loop)\n    if (typeof inputData === 'object' && !Array.isArray(inputData)) {\n        for (const key in inputData) {\n            if (key.startsWith('prompt_') && typeof inputData[key] === 'string') {\n                const text = inputData[key].trim();\n                if (text) {\n                    prompts.push({ name: key, text: text });\n                }\n            }\n        }\n    }\n\n    // Cas 2 : Un seul prompt (comportement ancien)\n    if (prompts.length === 0) {\n        const single = inputData.message?.content || \n                      inputData.output || \n                      inputData.text || \n                      inputData.prompt || \n                      inputData.prompt_genere || \n                      inputData.prompt_1 || \"\";   // sécurité supplémentaire\n\n        if (single && typeof single === 'string' && single.trim()) {\n            prompts.push({ name: `prompt_${index}`, text: single.trim() });\n        }\n    }\n\n    // Cas 3 : Si c'est déjà un tableau de prompts\n    if (prompts.length === 0 && Array.isArray(inputData)) {\n        inputData.forEach((p, i) => {\n            const text = typeof p === 'string' ? p : p.text || p.prompt || \"\";\n            if (text) prompts.push({ name: `prompt_${i}`, text: text.trim() });\n        });\n    }\n\n    if (prompts.length === 0) {\n        console.warn(`Item ${index} : Aucun prompt trouvé`);\n        return; // on saute cet item\n    }\n\n    // Génération des URLs pour chaque prompt trouvé\n    prompts.forEach(p => {\n        const encoded = encodeURIComponent(p.text);\n        \n        output.push({\n            json: {\n                prompt_name: p.name,\n                prompt_genere: p.text,\n                url_default: `https://image.pollinations.ai/prompt/${encoded}`,\n                url_flux: `https://image.pollinations.ai/prompt/${encoded}?model=flux`,\n                url_turbo: `https://image.pollinations.ai/prompt/${encoded}?model=turbo`\n            }\n        });\n    });\n});\n\nif (output.length === 0) {\n    throw new Error(\"Aucun prompt valide trouvé dans les données d'entrée.\");\n}\n\nreturn output;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -112,
+        768
+      ],
+      "id": "1e450f32-ddc8-4d18-9819-9c20fbc976fd",
+      "name": "URL maker"
+    },
+    {
+      "parameters": {
+        "jsCode": "const base64Image = $json.image_base64 || \"\";\n\nreturn [\n  {\n    json: {\n      model: \"qwen2.5vl:7b\",\n      messages: [\n        {\n          role: \"user\",\n          content: \"Provide a comprehensive, highly detailed analysis of this image, balancing extreme precision with a broad general overview. Structure your response exactly as follows: -Global Overview: Describe the main subject, the general setting, and the overall theme of the image in 2-3 sentences. -Meticulous Breakdown: Systematically analyze the image from foreground to background, and left to right. Document specific objects, exact colors, textures, lighting, spatial positioning, and micro-details that are easily overlooked. Be surgically precise. -Contextual Synthesis: Conclude with a high-level summary of the atmosphere, mood, style, or overall message of the image, keeping a macro perspective.\",\n          images: base64Image ? [base64Image] : []\n        }\n      ],\n      stream: false\n    }\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -816,
+        480
+      ],
+      "id": "eb0c6613-78d3-4636-aa3d-73f98eb7b468",
+      "name": "base64"
+    },
+    {
+      "parameters": {
+        "jsCode": "const message = $json.chatInput || \"\";\nconst binaryData = $input.item.binary || {};\nconst keys = Object.keys(binaryData);\nconst hasImage = keys.length > 0;\nconst imageKey = hasImage ? keys[0] : null;\n\nlet base64Image = null;\n\n// Si une image est présente, on utilise le helper officiel de n8n \n// pour lire le fichier sur le disque et le convertir proprement en Base64\nif (hasImage) {\n  const buffer = await this.helpers.getBinaryDataBuffer(0, imageKey);\n  base64Image = buffer.toString('base64')\n    .replace(/^data:image\\/\\w+;base64,/, \"\")\n    .replace(/\\s/g, \"\");\n}\n\nreturn [{\n  json: {\n    has_image: hasImage,\n    image_base64: base64Image,\n    user_prompt: message,\n    session_id: $json.sessionId\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1232,
+        704
+      ],
+      "id": "f72f040a-7fdf-4d68-9a5f-4d4d9b552e38",
+      "name": "Détecteur"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:11434/api/chat",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1152,
+        1040
+      ],
+      "id": "49967338-cf5f-408a-8c14-0e05871d2625",
+      "name": "Critique2"
+    },
+    {
+      "parameters": {
+        "options": {
+          "allowFileUploads": true
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.chatTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        -1776,
+        704
+      ],
+      "id": "8618c17c-14dd-4e11-b979-34777dfa8290",
+      "name": "Tchat",
+      "webhookId": "1bcf4055-a9f3-4771-b27e-d3b435c2ce23"
+    },
+    {
+      "parameters": {
+        "numberInputs": 3
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        1664,
+        1024
+      ],
+      "id": "60c01561-2429-4a0b-ac9a-496ba42969e3",
+      "name": "Merge"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:11434/api/chat",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1152,
+        848
+      ],
+      "id": "eee1bc25-dd47-4e78-b605-b5a72d9ad7e8",
+      "name": "Critique1"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:11434/api/chat",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1152,
+        1232
+      ],
+      "id": "be133698-b0c5-4c8c-ace0-6b8a338e6618",
+      "name": "Critique3"
+    },
+    {
+      "parameters": {
+        "jsCode": "const text = $json.message.content;\n\nconst fidelityMatch = text.match(/Fidelity.*?(\\d+(\\.\\d+)?)\\/10/i);\nconst aestheticMatch = text.match(/Aesthetic.*?(\\d+(\\.\\d+)?)\\/10/i);\nconst technicalMatch = text.match(/Technical.*?(\\d+(\\.\\d+)?)\\/10/i);\n\nconst fidelity = fidelityMatch ? parseFloat(fidelityMatch[1]) : 0;\nconst aesthetic = aestheticMatch ? parseFloat(aestheticMatch[1]) : 0;\nconst technical = technicalMatch ? parseFloat(technicalMatch[1]) : 0;\n\nconst finalScore = (fidelity * 0.5) + (technical * 0.2) + (aesthetic * 0.3);\nconst score = Math.round(finalScore * 100) / 100;\n\nconst image_base64 = $('Prompt Critique1').first().json.messages[0].images || \"\";\n\nlet prompt_genere = \"\";\ntry { prompt_genere = $('Prompt Optimizer').first().json.output.Prompt_A_v2 || \"\"; } catch(e) {}\nif (!prompt_genere) {\n  try { prompt_genere = $('URL maker').first().json.prompt_genere || \"\"; } catch(e) {}\n}\n\nreturn [{ json: { ...$json, fidelity, aesthetic, technical, score, image_base64, prompt_genere } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1376,
+        848
+      ],
+      "id": "0753b398-3bb0-4add-8114-ceaa2fa5808d",
+      "name": "Extrac NOTE1"
+    },
+    {
+      "parameters": {
+        "jsCode": "const text = $json.message.content;\n\nconst fidelityMatch = text.match(/Fidelity.*?(\\d+(\\.\\d+)?)\\/10/i);\nconst aestheticMatch = text.match(/Aesthetic.*?(\\d+(\\.\\d+)?)\\/10/i);\nconst technicalMatch = text.match(/Technical.*?(\\d+(\\.\\d+)?)\\/10/i);\n\nconst fidelity = fidelityMatch ? parseFloat(fidelityMatch[1]) : 0;\nconst aesthetic = aestheticMatch ? parseFloat(aestheticMatch[1]) : 0;\nconst technical = technicalMatch ? parseFloat(technicalMatch[1]) : 0;\n\nconst finalScore = (fidelity * 0.5) + (technical * 0.2) + (aesthetic * 0.3);\nconst score = Math.round(finalScore * 100) / 100;\n\nconst image_base64 = $('Prompt Critique2').first().json.messages[0].images || \"\";\n\nlet prompt_genere = \"\";\ntry { prompt_genere = $('Prompt Optimizer').first().json.output.Prompt_B_v2 || \"\"; } catch(e) {}\nif (!prompt_genere) {\n  try { prompt_genere = $('URL maker').first().json.prompt_genere || \"\"; } catch(e) {}\n}\n\nreturn [{ json: { ...$json, fidelity, aesthetic, technical, score, image_base64, prompt_genere } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1376,
+        1040
+      ],
+      "id": "3bd99c1a-e597-4b9d-b1c8-bed1a466d8b1",
+      "name": "Extrac NOTE2"
+    },
+    {
+      "parameters": {
+        "jsCode": "const text = $json.message.content;\n\nconst fidelityMatch = text.match(/Fidelity.*?(\\d+(\\.\\d+)?)\\/10/i);\nconst aestheticMatch = text.match(/Aesthetic.*?(\\d+(\\.\\d+)?)\\/10/i);\nconst technicalMatch = text.match(/Technical.*?(\\d+(\\.\\d+)?)\\/10/i);\n\nconst fidelity = fidelityMatch ? parseFloat(fidelityMatch[1]) : 0;\nconst aesthetic = aestheticMatch ? parseFloat(aestheticMatch[1]) : 0;\nconst technical = technicalMatch ? parseFloat(technicalMatch[1]) : 0;\n\nconst finalScore = (fidelity * 0.5) + (technical * 0.2) + (aesthetic * 0.3);\nconst score = Math.round(finalScore * 100) / 100;\n\nconst image_base64 = $('Prompt Critique3').first().json.messages[0].images || \"\";\n\nlet prompt_genere = \"\";\ntry { prompt_genere = $('Prompt Optimizer').first().json.output.Prompt_C_v2 || \"\"; } catch(e) {}\nif (!prompt_genere) {\n  try { prompt_genere = $('URL maker').first().json.prompt_genere || \"\"; } catch(e) {}\n}\n\nreturn [{ json: { ...$json, fidelity, aesthetic, technical, score, image_base64, prompt_genere } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1376,
+        1232
+      ],
+      "id": "2379df13-5182-4c3f-ba11-f73c758c471c",
+      "name": "Extrac NOTE3"
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\n\n// Loop count\nconst currentLoopCount = ($input.first().json.loop_count ?? 0) + 1;\n\n// Sécurité items\nif (!items || items.length < 3) {\n  return [{\n    json: {\n      best_score: 0,\n      best_critique: \"Erreur : Pas assez d'images\",\n      needs_improvement: false,\n      loop_count: currentLoopCount\n    }\n  }];\n}\n\n// Extraction des analyses avec tous les champs\nconst analyses = items.slice(0, 3).map((item) => ({\n  score:        Number(item.json.score || 0),\n  critique:     item.json.message?.content || \"\",\n  model:        item.json.model || \"unknown\",\n  fidelity:     item.json.fidelity || 0,\n  aesthetic:    item.json.aesthetic || 0,\n  technical:    item.json.technical || 0,\n  prompt:       item.json.prompt_genere || \"\",\n  image_base64: item.json.image_base64 || \"\"\n}));\n\n// Meilleur score\nconst bestScore    = Math.max(...analyses.map(a => a.score));\nconst bestAnalysis = analyses.find(a => a.score === bestScore);\nconst bestIndex    = analyses.indexOf(bestAnalysis);\n\nreturn [{\n  json: {\n    loop_count:        currentLoopCount,\n    needs_improvement: bestScore < 8.5,\n    best_score:        bestScore,\n    best_critique:     bestAnalysis.critique,\n    best_prompt:       bestAnalysis.prompt,\n    best_image:        bestAnalysis.image_base64,\n    best_model:        bestAnalysis.model,\n    image_1:           analyses[0],\n    image_2:           analyses[1],\n    image_3:           analyses[2],\n    best_image_complete: bestAnalysis\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2144,
+        1040
+      ],
+      "id": "7ba7156c-102b-42a0-9498-7d1d73c6fedf",
+      "name": "Comparaison"
+    },
+    {
+      "parameters": {
+        "jsCode": "const base64Image = $json.image_base64new || $json.image_base64 || \"\";\n\nlet promptReference = \"\";\ntry { promptReference = $('Prompt Optimizer').first().json.prompt_v2_c; } catch(e) {}\ntry { if (!promptReference) promptReference = $('Fusion').first().json.output; } catch(e) {}\ntry { if (!promptReference) promptReference = $('Prompt Engineer Sans image').first().json.output; } catch(e) {}\nif (!promptReference) throw new Error(\"Aucun prompt de référence trouvé.\");\n\nreturn [\n  {\n    json: {\n      model: \"qwen2.5vl:7b\",\n      messages: [\n        {\n          role: \"user\",\n          content: `You are a strict, professional and objective AI Image Quality Auditor.\nReference prompt used to generate this image:\n\"${promptReference}\"\nCRITICAL RULES - YOU MUST FOLLOW THESE EXACTLY:\n1. You are FORBIDDEN from writing paragraphs, stories, or any narrative text.\n2. You MUST follow the EXACT list format shown below - no deviations.\n3. You MUST provide EXACTLY THREE numerical scores (out of 10) in the SCORE section.\n4. Each score MUST be a single number between 0 and 10, with ONE decimal place maximum.\n5. Do NOT skip any section - all sections are MANDATORY.\n6. Be EXTREMELY critical and harsh in your evaluation - do not be lenient.\n7. If ANY element from the prompt is missing, you MUST explicitly state it in weaknesses.\n8. Do NOT use filler words or vague descriptions - be precise and direct.\nSTRICT FORMAT - COPY THIS EXACT STRUCTURE:\nGLOBAL OVERVIEW:\n[Write exactly 1-2 sentences summarizing what the image actually shows. Be brief and factual.]\nFIDELITY ANALYSIS:\n- Fidelity to the reference prompt: [Write your analysis here. Be specific about what matches.]\n- Major missing or incorrect elements: [List each missing/wrong element. If none, write \"None identified.\"]\nMETICULOUS VISUAL BREAKDOWN:\n- Composition: [Describe the composition in 1 sentence]\n- Main subject: [Describe the main subject in 1 sentence]\n- Colors: [Describe the colors in 1 sentence]\n- Lighting: [Describe the lighting in 1 sentence]\n- Style: [Describe the style in 1 sentence]\n- Important details: [Highlight important details in 1 sentence]\nSCORE - MANDATORY (Provide ALL THREE scores, each out of 10):\n- Fidelity to the reference prompt: [MUST be a number X.X/10]\n- Aesthetic quality: [MUST be a number X.X/10]\n- Technical execution: [MUST be a number X.X/10]\nCRITIQUE:\nStrengths:\n- [Strength 1 - be specific and harsh]\n- [Strength 2 - be specific and harsh]\nWeaknesses:\n- [Weakness 1 - be specific and critical]\n- [Weakness 2 - be specific and critical]\nREMINDER: You MUST provide ALL THREE scores. Each score MUST be a numerical value out of 10. Do not skip, combine, or omit any score.`,\n          images: base64Image ? [base64Image] : []\n        }\n      ],\n      stream: false,\n      temperature: 0.2,\n      num_ctx: 8192\n    }\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        928,
+        1232
+      ],
+      "id": "cb8314a0-6554-4566-af42-7160b03804e7",
+      "name": "Prompt Critique3"
+    },
+    {
+      "parameters": {
+        "jsCode": "const base64Image = $json.image_base64new || $json.image_base64 || \"\";\n\nlet promptReference = \"\";\ntry { promptReference = $('Prompt Optimizer').first().json.prompt_v2_b; } catch(e) {}\ntry { if (!promptReference) promptReference = $('Fusion').first().json.output; } catch(e) {}\ntry { if (!promptReference) promptReference = $('Prompt Engineer Sans image').first().json.output; } catch(e) {}\nif (!promptReference) throw new Error(\"Aucun prompt de référence trouvé.\");\n\nreturn [\n  {\n    json: {\n      model: \"qwen2.5vl:7b\",\n      messages: [\n        {\n          role: \"user\",\n          content: `You are a strict, professional and objective AI Image Quality Auditor.\nReference prompt used to generate this image:\n\"${promptReference}\"\nCRITICAL RULES - YOU MUST FOLLOW THESE EXACTLY:\n1. You are FORBIDDEN from writing paragraphs, stories, or any narrative text.\n2. You MUST follow the EXACT list format shown below - no deviations.\n3. You MUST provide EXACTLY THREE numerical scores (out of 10) in the SCORE section.\n4. Each score MUST be a single number between 0 and 10, with ONE decimal place maximum.\n5. Do NOT skip any section - all sections are MANDATORY.\n6. Be EXTREMELY critical and harsh in your evaluation - do not be lenient.\n7. If ANY element from the prompt is missing, you MUST explicitly state it in weaknesses.\n8. Do NOT use filler words or vague descriptions - be precise and direct.\nSTRICT FORMAT - COPY THIS EXACT STRUCTURE:\nGLOBAL OVERVIEW:\n[Write exactly 1-2 sentences summarizing what the image actually shows. Be brief and factual.]\nFIDELITY ANALYSIS:\n- Fidelity to the reference prompt: [Write your analysis here. Be specific about what matches.]\n- Major missing or incorrect elements: [List each missing/wrong element. If none, write \"None identified.\"]\nMETICULOUS VISUAL BREAKDOWN:\n- Composition: [Describe the composition in 1 sentence]\n- Main subject: [Describe the main subject in 1 sentence]\n- Colors: [Describe the colors in 1 sentence]\n- Lighting: [Describe the lighting in 1 sentence]\n- Style: [Describe the style in 1 sentence]\n- Important details: [Highlight important details in 1 sentence]\nSCORE - MANDATORY (Provide ALL THREE scores, each out of 10):\n- Fidelity to the reference prompt: [MUST be a number X.X/10]\n- Aesthetic quality: [MUST be a number X.X/10]\n- Technical execution: [MUST be a number X.X/10]\nCRITIQUE:\nStrengths:\n- [Strength 1 - be specific and harsh]\n- [Strength 2 - be specific and harsh]\nWeaknesses:\n- [Weakness 1 - be specific and critical]\n- [Weakness 2 - be specific and critical]\nREMINDER: You MUST provide ALL THREE scores. Each score MUST be a numerical value out of 10. Do not skip, combine, or omit any score.`,\n          images: base64Image ? [base64Image] : []\n        }\n      ],\n      stream: false,\n      temperature: 0.2,\n      num_ctx: 8192\n    }\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        928,
+        1040
+      ],
+      "id": "0750e787-e595-44aa-bb9f-1745cb78f5aa",
+      "name": "Prompt Critique2"
+    },
+    {
+      "parameters": {
+        "jsCode": "const base64Image = $json.image_base64new || $json.image_base64 || \"\";\n\nlet promptReference = \"\";\ntry { promptReference = $('Prompt Optimizer').first().json.prompt_v2_a; } catch(e) {}\ntry { if (!promptReference) promptReference = $('Fusion').first().json.output; } catch(e) {}\ntry { if (!promptReference) promptReference = $('Prompt Engineer Sans image').first().json.output; } catch(e) {}\nif (!promptReference) throw new Error(\"Aucun prompt de référence trouvé.\");\n\nreturn [\n  {\n    json: {\n      model: \"qwen2.5vl:7b\",\n      messages: [\n        {\n          role: \"user\",\n          content: `You are a strict, professional and objective AI Image Quality Auditor.\nReference prompt used to generate this image:\n\"${promptReference}\"\nCRITICAL RULES - YOU MUST FOLLOW THESE EXACTLY:\n1. You are FORBIDDEN from writing paragraphs, stories, or any narrative text.\n2. You MUST follow the EXACT list format shown below - no deviations.\n3. You MUST provide EXACTLY THREE numerical scores (out of 10) in the SCORE section.\n4. Each score MUST be a single number between 0 and 10, with ONE decimal place maximum.\n5. Do NOT skip any section - all sections are MANDATORY.\n6. Be EXTREMELY critical and harsh in your evaluation - do not be lenient.\n7. If ANY element from the prompt is missing, you MUST explicitly state it in weaknesses.\n8. Do NOT use filler words or vague descriptions - be precise and direct.\nSTRICT FORMAT - COPY THIS EXACT STRUCTURE:\nGLOBAL OVERVIEW:\n[Write exactly 1-2 sentences summarizing what the image actually shows. Be brief and factual.]\nFIDELITY ANALYSIS:\n- Fidelity to the reference prompt: [Write your analysis here. Be specific about what matches.]\n- Major missing or incorrect elements: [List each missing/wrong element. If none, write \"None identified.\"]\nMETICULOUS VISUAL BREAKDOWN:\n- Composition: [Describe the composition in 1 sentence]\n- Main subject: [Describe the main subject in 1 sentence]\n- Colors: [Describe the colors in 1 sentence]\n- Lighting: [Describe the lighting in 1 sentence]\n- Style: [Describe the style in 1 sentence]\n- Important details: [Highlight important details in 1 sentence]\nSCORE - MANDATORY (Provide ALL THREE scores, each out of 10):\n- Fidelity to the reference prompt: [MUST be a number X.X/10]\n- Aesthetic quality: [MUST be a number X.X/10]\n- Technical execution: [MUST be a number X.X/10]\nCRITIQUE:\nStrengths:\n- [Strength 1 - be specific and harsh]\n- [Strength 2 - be specific and harsh]\nWeaknesses:\n- [Weakness 1 - be specific and critical]\n- [Weakness 2 - be specific and critical]\nREMINDER: You MUST provide ALL THREE scores. Each score MUST be a numerical value out of 10. Do not skip, combine, or omit any score.`,\n          images: base64Image ? [base64Image] : []\n        }\n      ],\n      stream: false,\n      temperature: 0.2,\n      num_ctx: 8192\n    }\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        928,
+        848
+      ],
+      "id": "ad4a5924-dc84-4b64-93f8-6684c9c1b1dd",
+      "name": "Prompt Critique1"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:11434/api/chat",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -656,
+        480
+      ],
+      "id": "c1b7c23f-12c7-497d-a6c3-599adc3482bb",
+      "name": "Qwen2.5 analyse"
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.url_default }}",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "seed",
+              "value": "={{ Math.floor(Math.random() * 1000000) }}"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        208,
+        608
+      ],
+      "id": "18810a7f-f309-4bc7-803f-44e99b28c0e8",
+      "name": "Gen1"
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.url_flux }}",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "seed",
+              "value": "={{ Math.floor(Math.random() * 1000000) }}"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        208,
+        768
+      ],
+      "id": "5e575eee-6d41-4b98-950d-8ca77e56b03c",
+      "name": "Gen2"
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.url_turbo }}",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "seed",
+              "value": "={{ Math.floor(Math.random() * 1000000) }}"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        208,
+        928
+      ],
+      "id": "c317a15f-14e9-4a5f-b0df-99cfacfe890b",
+      "name": "Gen3"
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\n\nreturn await Promise.all(\n  items.map(async (item, index) => {\n    const buffer = await this.helpers.getBinaryDataBuffer(index, 'data');\n\n    return {\n      json: {\n        image_base64: buffer.toString('base64')\n      }\n    };\n  })\n);"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        448,
+        928
+      ],
+      "id": "d2c8b793-5186-4b48-bc5e-bf0e988d37cd",
+      "name": "Base64 Gen3"
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\n\nreturn await Promise.all(\n  items.map(async (item, index) => {\n    const buffer = await this.helpers.getBinaryDataBuffer(index, 'data');\n\n    return {\n      json: {\n        image_base64: buffer.toString('base64')\n      }\n    };\n  })\n);"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        448,
+        768
+      ],
+      "id": "ddb85ed6-0625-47e9-97d5-b7b9370f45af",
+      "name": "Base64 Gen2"
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\n\nreturn await Promise.all(\n  items.map(async (item, index) => {\n    const buffer = await this.helpers.getBinaryDataBuffer(index, 'data');\n\n    return {\n      json: {\n        image_base64: buffer.toString('base64')\n      }\n    };\n  })\n);"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        448,
+        608
+      ],
+      "id": "6431c7e4-025e-4dc2-9f0e-857ac2d4d676",
+      "name": "Base64 Gen1"
+    },
+    {
+      "parameters": {
+        "model": "qwen3:latest",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOllama",
+      "typeVersion": 1,
+      "position": [
+        -464,
+        656
+      ],
+      "id": "bc27c151-09ca-48ca-891d-0168984f0dc0",
+      "name": "Qwen3 I",
+      "credentials": {
+        "ollamaApi": {
+          "id": "pdHW5WLBRI447uGv",
+          "name": "Ollama account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "model": "qwen3:latest",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOllama",
+      "typeVersion": 1,
+      "position": [
+        -672,
+        1120
+      ],
+      "id": "af74490a-b1da-4bcc-9c69-2e807f0a83ca",
+      "name": "Qwen3 II",
+      "credentials": {
+        "ollamaApi": {
+          "id": "pdHW5WLBRI447uGv",
+          "name": "Ollama account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=PROMPT A\n{{ $json.image_1.prompt }}\n\n\nCRITIQUE A\n\n{{ $json.image_1.critique }}\n\n--------------------------------\n\nPROMPT B\n{{ $json.image_2.prompt }}\n\n\nCRITIQUE B\n\n{{ $json.image_2.critique }}\n\n--------------------------------\n\nPROMPT C\n{{ $json.image_3.prompt }}\n\n\nCRITIQUE C\n{{ $json.image_3.critique }}",
+        "hasOutputParser": true,
+        "options": {
+          "systemMessage": "You are an Elite Prompt Refinement Agent specialized in Flux, SDXL and image generation optimization.\n\nYou receive 3 prompts and their associated critiques.\n\nFor each prompt:\n\n- Analyze the prompt.\n- Analyze the critique associated with that prompt.\n- Rewrite the prompt by implementing the useful improvements suggested in the critique.\n- Preserve the original subject, scene, intent and composition.\n- Improve realism, fidelity, lighting, details, aesthetics and image quality whenever relevant.\n- Do not introduce unrelated elements.\n- Do not change the subject.\n- Do not merge prompts together.\n- Treat each prompt independently.\n\nOutput requirements:\n\n- Prompt_A_v2 must be an improved version of Prompt_A using Critique_A.\n- Prompt_B_v2 must be an improved version of Prompt_B using Critique_B.\n- Prompt_C_v2 must be an improved version of Prompt_C using Critique_C.\n\nReturn only a valid JSON object containing exactly:\n\n{\n  \"Prompt_A_v2\": \"...\",\n  \"Prompt_B_v2\": \"...\",\n  \"Prompt_C_v2\": \"...\"\n}"
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        2224,
+        1472
+      ],
+      "id": "94c86e39-168b-441f-b006-37b86f9f6d70",
+      "name": "Prompt Optimizer",
+      "retryOnFail": true
+    },
+    {
+      "parameters": {
+        "model": "qwen3:latest",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOllama",
+      "typeVersion": 1,
+      "position": [
+        2176,
+        1696
+      ],
+      "id": "cf6b5402-50ab-4780-a0cf-ceb9b9abf551",
+      "name": "Qwen3 III",
+      "credentials": {
+        "ollamaApi": {
+          "id": "pdHW5WLBRI447uGv",
+          "name": "Ollama account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\n\nconst result = {\n    url_default: null,\n    url_flux: null,\n    url_turbo: null,\n};\n\nitems.forEach((item) => {\n    const data = item.json.output || {};\n\n    if (data.Prompt_A_v2) {\n        const encoded = encodeURIComponent(data.Prompt_A_v2.trim());\n        result.url_default = `https://image.pollinations.ai/prompt/${encoded}`;\n    }\n\n    if (data.Prompt_B_v2) {\n        const encoded = encodeURIComponent(data.Prompt_B_v2.trim());\n        result.url_flux = `https://image.pollinations.ai/prompt/${encoded}?model=flux`;\n    }\n\n    if (data.Prompt_C_v2) {\n        const encoded = encodeURIComponent(data.Prompt_C_v2.trim());\n        result.url_turbo = `https://image.pollinations.ai/prompt/${encoded}?model=turbo`;\n    }\n});\n\nreturn [{ json: result }];;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -128,
+        1328
+      ],
+      "id": "af0ea5e4-b9ce-4d38-bc70-803e90f790ef",
+      "name": "URL maker new Gen"
+    },
+    {
+      "parameters": {
+        "schemaType": "manual",
+        "inputSchema": "{\n  \"type\": \"object\",\n  \"properties\": {\n    \"Prompt_A_v2\": {\n      \"type\": \"string\"\n    },\n    \"Prompt_B_v2\": {\n      \"type\": \"string\"\n    },\n    \"Prompt_C_v2\": {\n      \"type\": \"string\"\n    }\n  },\n  \"required\": [\n    \"Prompt_A_v2\",\n    \"Prompt_B_v2\",\n    \"Prompt_C_v2\"\n  ]\n}"
+      },
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.3,
+      "position": [
+        2416,
+        1696
+      ],
+      "id": "1f63ba84-1190-4b8d-9109-9a29f02c9cfd",
+      "name": "Structure Output"
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.url_default }}",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "seed",
+              "value": "={{ Math.floor(Math.random() * 1000000) }}"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        208,
+        1168
+      ],
+      "id": "e4a0e37c-84b8-4715-9b60-d29f941a6bc4",
+      "name": "Gen4"
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.url_turbo }}",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "seed",
+              "value": "={{ Math.floor(Math.random() * 1000000) }}"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        208,
+        1488
+      ],
+      "id": "931ca33f-fcaf-47a8-87fa-a94fa3eb4deb",
+      "name": "Gen6"
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.url_flux }}",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "seed",
+              "value": "={{ Math.floor(Math.random() * 1000000) }}"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        208,
+        1328
+      ],
+      "id": "58712f20-93e3-4aed-b4a0-041a73d3779b",
+      "name": "Gen5"
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\nreturn await Promise.all(\n  items.map(async (item, index) => {\n    const buffer = await this.helpers.getBinaryDataBuffer(index, 'data');\n    return {\n      json: {\n        image_base64new: buffer.toString('base64'),\n        prompt_genere: item.json.prompt_genere || \"\"\n      }\n    };\n  })\n);"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        448,
+        1488
+      ],
+      "id": "fb405ac3-fc4d-4cb4-8e4c-054197a452f8",
+      "name": "Base64 Gen6"
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\nreturn await Promise.all(\n  items.map(async (item, index) => {\n    const buffer = await this.helpers.getBinaryDataBuffer(index, 'data');\n    return {\n      json: {\n        image_base64new: buffer.toString('base64'),\n        prompt_genere: item.json.prompt_genere || \"\"\n      }\n    };\n  })\n);"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        448,
+        1328
+      ],
+      "id": "bdfdbfea-4de4-48e2-9891-43ea045bf1b9",
+      "name": "Base64 Gen5"
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\nreturn await Promise.all(\n  items.map(async (item, index) => {\n    const buffer = await this.helpers.getBinaryDataBuffer(index, 'data');\n    return {\n      json: {\n        image_base64new: buffer.toString('base64'),\n        prompt_genere: item.json.prompt_genere || \"\"\n      }\n    };\n  })\n);"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        448,
+        1168
+      ],
+      "id": "fc122023-7483-4dc3-be94-890e4f47dda1",
+      "name": "Base64 Gen4"
+    },
+    {
+      "parameters": {
+        "batchSize": 5,
+        "options": {
+          "reset": true
+        }
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        2000,
+        1344
+      ],
+      "id": "97ff681b-528e-4ce8-b911-708925f16cab",
+      "name": "Loop Over Items"
+    },
+    {
+      "parameters": {
+        "contextWindowLength": 9
+      },
+      "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
+      "typeVersion": 1.4,
+      "position": [
+        2288,
+        1696
+      ],
+      "id": "8d11c07d-d886-429d-a35c-55adb0b32586",
+      "name": "Simple Memory"
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\n\nlet loopCount = 0;\ntry {\n  loopCount = $('Comparaison').first().json.loop_count || 0;\n} catch(e) {\n  loopCount = 0;\n}\n\nreturn items.map(item => ({\n  json: {\n    ...item.json,\n    loop_count: loopCount\n  }\n}));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1904,
+        1040
+      ],
+      "id": "b8870eb1-e228-4b5c-83dc-fa1c6698a4e3",
+      "name": "Stock compteur"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={\n  \"best_prompt\": \"{{ $json.best_prompt }}\",\n  \"best_critique\": \"{{ $json.best_critique }}\"\n}",
+        "options": {
+          "systemMessage": "You are a world-class expert in prompt engineering for Stable Diffusion Realistic Vision V6 img2img model.\nYour mission:\nYou receive a \"best_prompt\" (the best prompt generated so far) and a very detailed \"best_critique\".\nYou must create an ULTIMATE FINAL PROMPT that is highly optimized, correcting all the weaknesses identified in the critique while preserving the strengths of the best_prompt.\nStrict Rules:\n\nExplicitly correct every weakness mentioned in the critique\nStrongly reinforce fidelity to the subject (face, pose, clothing, proportions, key details)\nAdd Stable Diffusion quality descriptors: masterpiece, best quality, ultra detailed, sharp focus, photorealistic, cinematic lighting, RAW photo, 8k uhd, dslr, high quality, film grain, Fujifilm XT3\nClear structure: Main subject → Precise details → Style & Atmosphere → Technical quality\nKeep the prompt concise but very rich (ideally 300-450 words)\nLanguage: English only\n\nRespond ONLY with a valid JSON object in this exact format:\n{\"final_prompt\": \"your complete prompt here\"}\nNo markdown, no backticks, no <think> tags."
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        2720,
+        1024
+      ],
+      "id": "98139a03-cda3-438d-9e23-3af237c5331a",
+      "name": "AI Agent",
+      "retryOnFail": true,
+      "maxTries": 2
+    },
+    {
+      "parameters": {
+        "model": "deepseek-r1:latest",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOllama",
+      "typeVersion": 1,
+      "position": [
+        2720,
+        1200
+      ],
+      "id": "36f569cd-349e-458d-9d33-25ade6344f7d",
+      "name": "Ollama Chat Model",
+      "credentials": {
+        "ollamaApi": {
+          "id": "pdHW5WLBRI447uGv",
+          "name": "Ollama account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Récupère le prompt généré par DeepSeek\nconst raw = $input.first().json.output || $input.first().json.text || \"\";\nconst jsonMatch = raw.match(/\"final_prompt\"\\s*:\\s*\"([\\s\\S]*?)\"\\s*\\}/);\nconst prompt = jsonMatch \n  ? jsonMatch[1] \n  : raw.replace(/<think>[\\s\\S]*?<\\/think>/gi, \"\").trim();\n\n// best_image est un tableau — on prend le premier élément\nconst rawImg = $('Condition').first().json.best_image;\nconst cleanBase64 = Array.isArray(rawImg) ? rawImg[0] : rawImg;\n\n// Construit le body pour l'API Forge (img2img)\nconst requestBody = {\n  prompt: prompt + \", use the provided image as a visual draft and reference for composition, subject, and style\",\n  negative_prompt: \"lowres, bad anatomy, bad hands, text, error, missing fingers, extra digit, fewer digits, cropped, worst quality, low quality, normal quality, jpeg artifacts, signature, watermark, username, blurry\",\n  init_images: [cleanBase64],\n  denoising_strength: 0.6,\n  width: 768,\n  height: 768,\n  steps: 30,\n  cfg_scale: 8,\n  sampler_name: \"DPM++ 2M Karras\"\n};\n\nreturn {\n  json: {\n    body: requestBody,\n    prompt_used: prompt\n  }\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3072,
+        1024
+      ],
+      "id": "5005e921-19a7-4917-ba7e-0695dd87c1b5",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "2219538b-4c79-4407-aa98-a65a9688944a",
+              "leftValue": "={{ $json.best_score }}",
+              "rightValue": "={{ 9 }}",
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            },
+            {
+              "id": "41680099-aa39-4e35-889a-42af1c5f0180",
+              "leftValue": "={{ $json.loop_count }}",
+              "rightValue": "={{ 3 }}",
+              "operator": {
+                "type": "number",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "or"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        2352,
+        1040
+      ],
+      "id": "7b13802f-9208-475a-b82f-fb992a13b189",
+      "name": "Condition"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:7860/sdapi/v1/img2img",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.body }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        3280,
+        1024
+      ],
+      "id": "45b10afb-6943-47a3-812a-6c08d3f50848",
+      "name": "HTTP Request"
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\n\nreturn items.map(item => {\n  const base64 = item.json.images[0];\n\n  return {\n    json: item.json,\n    binary: {\n      image: {\n        data: base64,\n        mimeType: 'image/png',\n        fileName: 'image.png'\n      }\n    }\n  };\n});"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3472,
+        1024
+      ],
+      "id": "7f80d041-df36-4ec7-a7c7-3816712c06d5",
+      "name": "Code in JavaScript1"
+    },
+    {
+      "parameters": {
+        "content": "Chat\n",
+        "height": 192,
+        "width": 192,
+        "color": "#FFFFFF"
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -1824,
+        656
+      ],
+      "id": "3caa64f0-6061-40f3-b4c0-a8db8c7c2ef3",
+      "name": "Sticky Note"
+    },
+    {
+      "parameters": {
+        "content": "Détecteur d'image\n",
+        "height": 192,
+        "width": 336,
+        "color": 5
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -1280,
+        656
+      ],
+      "id": "189ab495-55b3-4157-bf1f-fd8fe3ba7942",
+      "name": "Sticky Note1"
+    },
+    {
+      "parameters": {
+        "content": "Prompt sans image",
+        "height": 352,
+        "width": 464,
+        "color": 6
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -784,
+        896
+      ],
+      "id": "d3c2e058-f8ef-4b07-b198-641556f6adaa",
+      "name": "Sticky Note2"
+    },
+    {
+      "parameters": {
+        "content": "Prompt avec image",
+        "height": 352,
+        "width": 656,
+        "color": 6
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -848,
+        416
+      ],
+      "id": "4c0bf21a-de39-41f3-b573-3544e007f7ed",
+      "name": "Sticky Note3"
+    },
+    {
+      "parameters": {
+        "content": "URL maker GEN1",
+        "height": 192,
+        "width": 192,
+        "color": 2
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -160,
+        720
+      ],
+      "id": "47d02ce5-2b38-4ebc-8218-9d47537baa77",
+      "name": "Sticky Note4"
+    },
+    {
+      "parameters": {
+        "content": "URL maker NEW GEN",
+        "height": 192,
+        "width": 192,
+        "color": 2
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -176,
+        1280
+      ],
+      "id": "8be572d5-bddc-4d70-a8ac-f508fd470d7b",
+      "name": "Sticky Note5"
+    },
+    {
+      "parameters": {
+        "content": "Génrateurs GEN1",
+        "height": 512,
+        "width": 400,
+        "color": "#3D5B10"
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        176,
+        560
+      ],
+      "id": "dbc56d8e-9309-43b7-b577-52cf46d5d9ea",
+      "name": "Sticky Note6"
+    },
+    {
+      "parameters": {
+        "content": "Génrateurs NEW GEN",
+        "height": 512,
+        "width": 400,
+        "color": "#3D5B10"
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        176,
+        1120
+      ],
+      "id": "35a05bf4-8065-4b05-9a31-29405686b0e8",
+      "name": "Sticky Note7"
+    },
+    {
+      "parameters": {
+        "content": "Critique",
+        "height": 576,
+        "width": 912,
+        "color": "#D59058"
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        880,
+        800
+      ],
+      "id": "c8c06e64-8f0a-4cd0-ab4e-a7892c40e72f",
+      "name": "Sticky Note8"
+    },
+    {
+      "parameters": {
+        "content": "Compteur + comparaion",
+        "height": 192,
+        "width": 608,
+        "color": "#4FB08B"
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1872,
+        992
+      ],
+      "id": "12a7f308-6979-4fe2-b225-d0394dea1316",
+      "name": "Sticky Note9"
+    },
+    {
+      "parameters": {
+        "content": "Reformulation",
+        "height": 528,
+        "width": 576,
+        "color": "#BCA9DF"
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1968,
+        1296
+      ],
+      "id": "b57e4ed4-5f94-4ef7-ab1d-c680b706a2ad",
+      "name": "Sticky Note10"
+    },
+    {
+      "parameters": {
+        "content": "Final gen",
+        "height": 352,
+        "width": 1024,
+        "color": 3
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        2672,
+        976
+      ],
+      "id": "a890aa77-9633-4e2f-97e6-8373dbbbcf46",
+      "name": "Sticky Note11"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "If": {
+      "main": [
+        [
+          {
+            "node": "base64",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prompt Engineer Sans image",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prompt Engineer Sans image": {
+      "main": [
+        [
+          {
+            "node": "URL maker",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fusion": {
+      "main": [
+        [
+          {
+            "node": "URL maker",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "URL maker": {
+      "main": [
+        [
+          {
+            "node": "Gen1",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Gen2",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Gen3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "base64": {
+      "main": [
+        [
+          {
+            "node": "Qwen2.5 analyse",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Détecteur": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tchat": {
+      "main": [
+        [
+          {
+            "node": "Détecteur",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Critique2": {
+      "main": [
+        [
+          {
+            "node": "Extrac NOTE2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "Stock compteur",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Critique1": {
+      "main": [
+        [
+          {
+            "node": "Extrac NOTE1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Critique3": {
+      "main": [
+        [
+          {
+            "node": "Extrac NOTE3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extrac NOTE1": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extrac NOTE2": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Extrac NOTE3": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 2
+          }
+        ]
+      ]
+    },
+    "Comparaison": {
+      "main": [
+        [
+          {
+            "node": "Condition",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prompt Critique3": {
+      "main": [
+        [
+          {
+            "node": "Critique3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prompt Critique2": {
+      "main": [
+        [
+          {
+            "node": "Critique2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prompt Critique1": {
+      "main": [
+        [
+          {
+            "node": "Critique1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Qwen2.5 analyse": {
+      "main": [
+        [
+          {
+            "node": "Fusion",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gen1": {
+      "main": [
+        [
+          {
+            "node": "Base64 Gen1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gen2": {
+      "main": [
+        [
+          {
+            "node": "Base64 Gen2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gen3": {
+      "main": [
+        [
+          {
+            "node": "Base64 Gen3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Base64 Gen3": {
+      "main": [
+        [
+          {
+            "node": "Prompt Critique3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Base64 Gen2": {
+      "main": [
+        [
+          {
+            "node": "Prompt Critique2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Base64 Gen1": {
+      "main": [
+        [
+          {
+            "node": "Prompt Critique1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Qwen3 I": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Fusion",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Qwen3 II": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Prompt Engineer Sans image",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prompt Optimizer": {
+      "main": [
+        [
+          {
+            "node": "URL maker new Gen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Qwen3 III": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Prompt Optimizer",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "URL maker new Gen": {
+      "main": [
+        [
+          {
+            "node": "Gen6",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Gen5",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Gen4",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Structure Output": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "Prompt Optimizer",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gen4": {
+      "main": [
+        [
+          {
+            "node": "Base64 Gen4",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gen6": {
+      "main": [
+        [
+          {
+            "node": "Base64 Gen6",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gen5": {
+      "main": [
+        [
+          {
+            "node": "Base64 Gen5",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Base64 Gen6": {
+      "main": [
+        [
+          {
+            "node": "Prompt Critique3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Base64 Gen5": {
+      "main": [
+        [
+          {
+            "node": "Prompt Critique2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Base64 Gen4": {
+      "main": [
+        [
+          {
+            "node": "Prompt Critique1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Items": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Prompt Optimizer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Simple Memory": {
+      "ai_memory": [
+        [
+          {
+            "node": "Prompt Optimizer",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Stock compteur": {
+      "main": [
+        [
+          {
+            "node": "Comparaison",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ollama Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Condition": {
+      "main": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "c5e8bfe9-88a6-40f3-80d2-2a8c4f375bfd",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "b5dee6690786908d61db39c9649fda587f216697fbaa54bebf0b98655e9c33c9"
+  },
+  "nodeGroups": [],
+  "id": "hmnWI9xbfqapVr2a",
+  "tags": []
+}
