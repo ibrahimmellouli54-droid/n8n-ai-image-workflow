@@ -675,6 +675,8 @@
     },
     {
       "parameters": {
+        "sessionIdType": "customKey",
+        "sessionKey": "={{ $execution.id }}",
         "contextWindowLength": 9
       },
       "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
@@ -1563,7 +1565,7 @@
     "binaryMode": "separate",
     "availableInMCP": false
   },
-  "versionId": "c5e8bfe9-88a6-40f3-80d2-2a8c4f375bfd",
+  "versionId": "ed78c4f9-5684-41f8-ac0e-f1db7088a569",
   "meta": {
     "templateCredsSetupCompleted": true,
     "instanceId": "b5dee6690786908d61db39c9649fda587f216697fbaa54bebf0b98655e9c33c9"
